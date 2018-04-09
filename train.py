@@ -417,7 +417,7 @@ if __name__ == '__main__':
                     tensorboard_writer.add_histogram(tag + '/grad', to_np(value.grad), epoch + 1)
         if args.checkpoint and main_proc:
             file_path = '%s/deepspeech_%d.pth.tar' % (save_folder, epoch + 1)
-            torch.save(DeepSpeech.serialize(model.module if args.distributed else model, optimizer=optimizer, epoch=epoch,
+            torch.save(DeepSpeech.serialize(model, optimizer=optimizer, epoch=epoch,
                                             loss_results=loss_results, wer_results=wer_results, cer_results=cer_results),
                        file_path)
         # anneal lr

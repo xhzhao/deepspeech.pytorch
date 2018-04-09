@@ -220,6 +220,12 @@ class DeepSpeech(nn.Module):
     @staticmethod
     def serialize(model, optimizer=None, epoch=None, iteration=None, loss_results=None,
                   cer_results=None, wer_results=None, avg_loss=None, meta=None):
+        model_is_cuda = next(model.parameters()).is_cuda
+        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
+        if model_is_cuda or model_is_dist:
+            model = model.module
+        else:
+            model = model
         package = {
             'version': model._version,
             'hidden_size': model._hidden_size,
@@ -249,7 +255,8 @@ class DeepSpeech(nn.Module):
     @staticmethod
     def get_labels(model):
         model_is_cuda = next(model.parameters()).is_cuda
-        return model.module._labels if model_is_cuda else model._labels
+        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
+        return model.module._labels if model_is_cuda or model_is_dist else model._labels
 
     @staticmethod
     def get_param_size(model):
@@ -264,12 +271,14 @@ class DeepSpeech(nn.Module):
     @staticmethod
     def get_audio_conf(model):
         model_is_cuda = next(model.parameters()).is_cuda
-        return model.module._audio_conf if model_is_cuda else model._audio_conf
+        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
+        return model.module._audio_conf if model_is_cuda or model_is_dist else model._audio_conf
 
     @staticmethod
     def get_meta(model):
         model_is_cuda = next(model.parameters()).is_cuda
-        m = model.module if model_is_cuda else model
+        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
+        m = model.module if model_is_cuda or model_is_dist else model
         meta = {
             "version": m._version,
             "hidden_size": m._hidden_size,
