@@ -105,12 +105,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.distributed = args.world_size > 1
     main_proc = True
-    if args.distributed:
+    if args.distributed and args.cuda:
         if args.gpu_rank:
             torch.cuda.set_device(int(args.gpu_rank))
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
         main_proc = args.rank == 0  # Only the first proc should save models
+    if args.distributed and not args.cuda:
+        dist.init_process_group(backend=args.dist_backend)
+
     save_folder = args.save_folder
 
     loss_results, cer_results, wer_results = torch.Tensor(args.epochs), torch.Tensor(args.epochs), torch.Tensor(
@@ -252,6 +255,8 @@ if __name__ == '__main__':
     elif args.cuda and args.distributed:
         model.cuda()
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=(args.gpu_rank,) if args.rank else None)
+    elif not args.cuda and args.distributed:
+        model = torch.nn.parallel.DistributedDataParallelCPU(model)
 
     print(model)
     print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
@@ -412,8 +417,8 @@ if __name__ == '__main__':
                     tensorboard_writer.add_histogram(tag + '/grad', to_np(value.grad), epoch + 1)
         if args.checkpoint and main_proc:
             file_path = '%s/deepspeech_%d.pth.tar' % (save_folder, epoch + 1)
-            torch.save(DeepSpeech.serialize(model, optimizer=optimizer, epoch=epoch, loss_results=loss_results,
-                                            wer_results=wer_results, cer_results=cer_results),
+            torch.save(DeepSpeech.serialize(model.module if args.distributed else model, optimizer=optimizer, epoch=epoch,
+                                            loss_results=loss_results, wer_results=wer_results, cer_results=cer_results),
                        file_path)
         # anneal lr
         optim_state = optimizer.state_dict()
