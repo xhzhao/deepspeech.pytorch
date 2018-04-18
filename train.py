@@ -240,7 +240,7 @@ if __name__ == '__main__':
         train_sampler = BucketingSampler(train_dataset, batch_size=args.batch_size)
     else:
         train_sampler = DistributedBucketingSampler(train_dataset, batch_size=args.batch_size,
-                                                    num_replicas=args.world_size, rank=args.rank)
+                                                    num_replicas=args.world_size)
     train_loader = AudioDataLoader(train_dataset,
                                    num_workers=args.num_workers, batch_sampler=train_sampler)
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
@@ -256,7 +256,8 @@ if __name__ == '__main__':
         model.cuda()
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=(args.gpu_rank,) if args.rank else None)
     elif not args.cuda and args.distributed:
-        model = torch.nn.parallel.DistributedDataParallelCPU(model)
+        #model = torch.nn.parallel.DistributedDataParallelCPU(model)
+        model = DistributedDataParallel(model)
 
     print(model)
     print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
@@ -435,5 +436,11 @@ if __name__ == '__main__':
 
         avg_loss = 0
         if not args.no_shuffle:
-            print("Shuffling batches...")
-            train_sampler.shuffle(epoch)
+
+            if args.distributed:
+                if dist.get_rank() == 0:
+                    print("Shuffling batches on rank 0 ...")
+                    train_sampler.shuffle(epoch)
+            else:
+                print("Shuffling batches...")
+                train_sampler.shuffle(epoch)
