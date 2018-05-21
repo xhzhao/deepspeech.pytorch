@@ -317,7 +317,7 @@ if __name__ == '__main__':
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-            if not args.silent:
+            if not args.silent and ( args.distributed == False or (args.distributed == True and dist.get_rank() == 0) ):
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -336,10 +336,11 @@ if __name__ == '__main__':
         avg_loss /= len(train_sampler)
 
         epoch_time = time.time() - start_epoch_time
-        print('Training Summary Epoch: [{0}]\t'
-              'Time taken (s): {epoch_time:.0f}\t'
-              'Average Loss {loss:.3f}\t'.format(
-            epoch + 1, epoch_time=epoch_time, loss=avg_loss))
+        if args.distributed == False or (args.distributed == True and dist.get_rank() == 0):
+            print('Training Summary Epoch: [{0}]\t'
+                    'Time taken (s): {epoch_time:.0f}\t'
+                    'Average Loss {loss:.3f}\t'.format(
+                    epoch + 1, epoch_time=epoch_time, loss=avg_loss))
 
         start_iter = 0  # Reset start iteration for next epoch
         total_cer, total_wer = 0, 0
