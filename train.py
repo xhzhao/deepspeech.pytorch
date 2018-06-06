@@ -11,7 +11,7 @@ from tqdm import tqdm
 from warpctc_pytorch import CTCLoss
 
 from data.data_loader import AudioDataLoader, SpectrogramDataset, BucketingSampler, DistributedBucketingSampler
-from data.distributed import DistributedDataParallel
+from data.distributed_cpu import DistributedDataParallelCPU
 from decoder import GreedyDecoder
 from model import DeepSpeech, supported_rnns
 
@@ -257,7 +257,7 @@ if __name__ == '__main__':
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=(args.gpu_rank,) if args.rank else None)
     elif not args.cuda and args.distributed:
         #model = torch.nn.parallel.DistributedDataParallelCPU(model)
-        model = DistributedDataParallel(model)
+        model = DistributedDataParallelCPU(model)
 
     print(model)
     print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
@@ -384,10 +384,11 @@ if __name__ == '__main__':
         loss_results[epoch] = avg_loss
         wer_results[epoch] = wer
         cer_results[epoch] = cer
-        print('Validation Summary Epoch: [{0}]\t'
-              'Average WER {wer:.3f}\t'
-              'Average CER {cer:.3f}\t'.format(
-            epoch + 1, wer=wer, cer=cer))
+        if args.distributed == False or (args.distributed == True and dist.get_rank() == 0):
+            print('Validation Summary Epoch: [{0}]\t'
+                  'Average WER {wer:.3f}\t'
+                  'Average CER {cer:.3f}\t'.format(
+                epoch + 1, wer=wer, cer=cer))
 
         if args.visdom and main_proc:
             x_axis = epochs[0:epoch + 1]
