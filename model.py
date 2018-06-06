@@ -7,11 +7,22 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.autograd import Variable
 
-supported_rnns = {
-    'lstm': nn.LSTM,
-    'rnn': nn.RNN,
-    'gru': nn.GRU
-}
+enable_irnn = True
+if enable_irnn:
+    import irnn_pytorch as irnn
+    supported_rnns = {
+        'lstm': nn.LSTM,
+        'rnn': nn.RNN,
+        'gru': irnn.GRU
+    }
+else:
+    supported_rnns = {
+        'lstm': nn.LSTM,
+        'rnn': nn.RNN,
+        'gru': nn.GRU
+    }
+
+print("supported_rnns = ", supported_rnns)
 supported_rnns_inv = dict((v, k) for k, v in supported_rnns.items())
 
 
@@ -314,6 +325,9 @@ if __name__ == '__main__':
     print("  Window Type:      ", model._audio_conf.get("window", "n/a"))
     print("  Window Size:      ", model._audio_conf.get("window_size", "n/a"))
     print("  Window Stride:    ", model._audio_conf.get("window_stride", "n/a"))
+
+    print("engine = ", args.engine)
+    print("supported_rnns = ", supported_rnns)
 
     if package.get('loss_results', None) is not None:
         print("")

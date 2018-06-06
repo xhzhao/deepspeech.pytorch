@@ -1,11 +1,11 @@
 #!/bin/sh
 
 
-export PATH="/home/zhaoxiao/anaconda3-intelpytorch/bin:$PATH"
+export PATH="/home/zhaoxiao/anaconda3-xhzhao/bin:$PATH"
 #export MPICH_MAX_THREAD_SAFETY=multiple
 
 export KMP_AFFINITY=compact,1,0,granularity=fine
-export OMP_NUM_THREADS=40
+export OMP_NUM_THREADS=56
 
 lscpu
 which python
