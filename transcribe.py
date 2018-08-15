@@ -5,7 +5,7 @@ warnings.simplefilter('ignore')
 
 from decoder import GreedyDecoder
 
-from torch.autograd import Variable
+import torch
 
 from data.data_loader import SpectrogramParser
 from model import DeepSpeech
@@ -60,12 +60,13 @@ def decode_results(model, decoded_output, decoded_offsets):
         for pi in range(min(args.top_paths, len(decoded_output[b]))):
             result = {'transcription': decoded_output[b][pi]}
             if args.offsets:
-                result['offsets'] = decoded_offsets[b][pi]
+                result['offsets'] = decoded_offsets[b][pi].tolist()
             results['output'].append(result)
     return results
 
 
 if __name__ == '__main__':
+    torch.set_grad_enabled(False)
     model = DeepSpeech.load_model(args.model_path, cuda=args.cuda)
     model.eval()
 
@@ -85,7 +86,6 @@ if __name__ == '__main__':
 
     spect = parser.parse_audio(args.audio_path).contiguous()
     spect = spect.view(1, 1, spect.size(0), spect.size(1))
-    out = model(Variable(spect, volatile=True))
-    out = out.transpose(0, 1)  # TxNxH
+    out = model(spect)
     decoded_output, decoded_offsets = decoder.decode(out.data)
     print(json.dumps(decode_results(model, decoded_output, decoded_offsets)))

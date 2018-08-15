@@ -11,7 +11,7 @@ from tqdm import tqdm
 from warpctc_pytorch import CTCLoss
 
 from data.data_loader import AudioDataLoader, SpectrogramDataset, BucketingSampler, DistributedBucketingSampler
-from data.distributed_cpu import DistributedDataParallelCPU
+from data.distributed import DistributedDataParallel
 from decoder import GreedyDecoder
 from model import DeepSpeech, supported_rnns
 
@@ -32,6 +32,8 @@ parser.add_argument('--hidden-layers', default=5, type=int, help='Number of RNN 
 parser.add_argument('--rnn-type', default='gru', help='Type of the RNN. rnn|gru|lstm are supported')
 parser.add_argument('--epochs', default=70, type=int, help='Number of training epochs')
 parser.add_argument('--cuda', dest='cuda', action='store_true', help='Use cuda to train model')
+parser.add_argument('--device-ids', default=None, nargs='+', type=int,
+                    help='If using cuda, sets the GPU devices for the process')
 parser.add_argument('--lr', '--learning-rate', default=3e-4, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--max-norm', default=400, type=int, help='Norm cutoff to prevent explosion of gradients')
@@ -105,15 +107,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.distributed = args.world_size > 1
     main_proc = True
-    if args.distributed and args.cuda:
+    if args.distributed:
         if args.gpu_rank:
             torch.cuda.set_device(int(args.gpu_rank))
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
         main_proc = args.rank == 0  # Only the first proc should save models
-    if args.distributed and not args.cuda:
-        dist.init_process_group(backend=args.dist_backend)
-
     save_folder = args.save_folder
 
     loss_results, cer_results, wer_results = torch.Tensor(args.epochs), torch.Tensor(args.epochs), torch.Tensor(
@@ -240,7 +239,7 @@ if __name__ == '__main__':
         train_sampler = BucketingSampler(train_dataset, batch_size=args.batch_size)
     else:
         train_sampler = DistributedBucketingSampler(train_dataset, batch_size=args.batch_size,
-                                                    num_replicas=args.world_size)
+                                                    num_replicas=args.world_size, rank=args.rank)
     train_loader = AudioDataLoader(train_dataset,
                                    num_workers=args.num_workers, batch_sampler=train_sampler)
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
@@ -251,13 +250,10 @@ if __name__ == '__main__':
         train_sampler.shuffle(start_epoch)
 
     if args.cuda and not args.distributed:
-        model = torch.nn.DataParallel(model).cuda()
+        model = torch.nn.DataParallel(model, device_ids=args.device_ids).cuda()
     elif args.cuda and args.distributed:
         model.cuda()
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=(args.gpu_rank,) if args.rank else None)
-    elif not args.cuda and args.distributed:
-        #model = torch.nn.parallel.DistributedDataParallelCPU(model)
-        model = DistributedDataParallelCPU(model)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=(int(args.gpu_rank),) if args.rank else None)
 
     print(model)
     print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
@@ -298,7 +294,7 @@ if __name__ == '__main__':
                 print("WARNING: received an inf loss, setting loss value to 0")
                 loss_value = 0
             else:
-                loss_value = loss.data[0]
+                loss_value = loss.item()
 
             avg_loss += loss_value
             losses.update(loss_value, inputs.size(0))
@@ -307,7 +303,7 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm(model.parameters(), args.max_norm)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_norm)
             # SGD step
             optimizer.step()
 
@@ -317,7 +313,7 @@ if __name__ == '__main__':
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-            if not args.silent and ( args.distributed == False or (args.distributed == True and dist.get_rank() == 0) ):
+            if not args.silent:
                 print('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -336,55 +332,52 @@ if __name__ == '__main__':
         avg_loss /= len(train_sampler)
 
         epoch_time = time.time() - start_epoch_time
-        if args.distributed == False or (args.distributed == True and dist.get_rank() == 0):
-            print('Training Summary Epoch: [{0}]\t'
-                    'Time taken (s): {epoch_time:.0f}\t'
-                    'Average Loss {loss:.3f}\t'.format(
-                    epoch + 1, epoch_time=epoch_time, loss=avg_loss))
+        print('Training Summary Epoch: [{0}]\t'
+              'Time taken (s): {epoch_time:.0f}\t'
+              'Average Loss {loss:.3f}\t'.format(
+            epoch + 1, epoch_time=epoch_time, loss=avg_loss))
 
         start_iter = 0  # Reset start iteration for next epoch
         total_cer, total_wer = 0, 0
         model.eval()
-        for i, (data) in tqdm(enumerate(test_loader), total=len(test_loader)):
-            inputs, targets, input_percentages, target_sizes = data
+        with torch.no_grad():
+            for i, (data) in tqdm(enumerate(test_loader), total=len(test_loader)):
+                inputs, targets, input_percentages, target_sizes = data
 
-            inputs = Variable(inputs, volatile=True)
+                # unflatten targets
+                split_targets = []
+                offset = 0
+                for size in target_sizes:
+                    split_targets.append(targets[offset:offset + size])
+                    offset += size
 
-            # unflatten targets
-            split_targets = []
-            offset = 0
-            for size in target_sizes:
-                split_targets.append(targets[offset:offset + size])
-                offset += size
+                if args.cuda:
+                    inputs = inputs.cuda()
 
-            if args.cuda:
-                inputs = inputs.cuda()
+                out = model(inputs)  # NxTxH
+                seq_length = out.size(1)
+                sizes = input_percentages.mul_(int(seq_length)).int()
 
-            out = model(inputs)  # NxTxH
-            seq_length = out.size(1)
-            sizes = input_percentages.mul_(int(seq_length)).int()
+                decoded_output, _ = decoder.decode(out.data, sizes)
+                target_strings = decoder.convert_to_strings(split_targets)
+                wer, cer = 0, 0
+                for x in range(len(target_strings)):
+                    transcript, reference = decoded_output[x][0], target_strings[x][0]
+                    wer += decoder.wer(transcript, reference) / float(len(reference.split()))
+                    cer += decoder.cer(transcript, reference) / float(len(reference))
+                total_cer += cer
+                total_wer += wer
 
-            decoded_output, _ = decoder.decode(out.data, sizes)
-            target_strings = decoder.convert_to_strings(split_targets)
-            wer, cer = 0, 0
-            for x in range(len(target_strings)):
-                transcript, reference = decoded_output[x][0], target_strings[x][0]
-                wer += decoder.wer(transcript, reference) / float(len(reference.split()))
-                cer += decoder.cer(transcript, reference) / float(len(reference))
-            total_cer += cer
-            total_wer += wer
-
-            if args.cuda:
-                torch.cuda.synchronize()
-            del out
-        wer = total_wer / len(test_loader.dataset)
-        cer = total_cer / len(test_loader.dataset)
-        wer *= 100
-        cer *= 100
-        loss_results[epoch] = avg_loss
-        wer_results[epoch] = wer
-        cer_results[epoch] = cer
-        if args.distributed == False or (args.distributed == True and dist.get_rank() == 0):
+                if args.cuda:
+                    torch.cuda.synchronize()
+                del out
+            wer = total_wer / len(test_loader.dataset)
+            cer = total_cer / len(test_loader.dataset)
+            wer *= 100
+            cer *= 100
+            loss_results[epoch] = avg_loss
+            wer_results[epoch] = wer
+            cer_results[epoch] = cer
             print('Validation Summary Epoch: [{0}]\t'
                   'Average WER {wer:.3f}\t'
                   'Average CER {cer:.3f}\t'.format(
@@ -420,8 +413,8 @@ if __name__ == '__main__':
                     tensorboard_writer.add_histogram(tag + '/grad', to_np(value.grad), epoch + 1)
         if args.checkpoint and main_proc:
             file_path = '%s/deepspeech_%d.pth.tar' % (save_folder, epoch + 1)
-            torch.save(DeepSpeech.serialize(model, optimizer=optimizer, epoch=epoch,
-                                            loss_results=loss_results, wer_results=wer_results, cer_results=cer_results),
+            torch.save(DeepSpeech.serialize(model, optimizer=optimizer, epoch=epoch, loss_results=loss_results,
+                                            wer_results=wer_results, cer_results=cer_results),
                        file_path)
         # anneal lr
         optim_state = optimizer.state_dict()
@@ -438,11 +431,5 @@ if __name__ == '__main__':
 
         avg_loss = 0
         if not args.no_shuffle:
-
-            if args.distributed:
-                if dist.get_rank() == 0:
-                    print("Shuffling batches on rank 0 ...")
-                    train_sampler.shuffle(epoch)
-            else:
-                print("Shuffling batches...")
-                train_sampler.shuffle(epoch)
+            print("Shuffling batches...")
+            train_sampler.shuffle(epoch)

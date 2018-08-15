@@ -5,7 +5,6 @@ from tempfile import NamedTemporaryFile
 from torch.distributed import get_rank
 from torch.distributed import get_world_size
 from torch.utils.data.sampler import Sampler
-import torch.distributed as dist 
 
 import librosa
 import numpy as np
@@ -262,9 +261,7 @@ class DistributedBucketingSampler(Sampler):
         # deterministically shuffle based on epoch
         g = torch.Generator()
         g.manual_seed(epoch)
-        rand_result = torch.randperm(len(self.bins), generator=g)
-        dist.broadcast(rand_result, 0)
-        bin_ids = list(rand_result)
+        bin_ids = list(torch.randperm(len(self.bins), generator=g))
         self.bins = [self.bins[i] for i in bin_ids]
 
 

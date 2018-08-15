@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.autograd import Variable
 
+
 enable_irnn = True
 if enable_irnn:
     import irnn_pytorch as irnn
@@ -232,11 +233,7 @@ class DeepSpeech(nn.Module):
     def serialize(model, optimizer=None, epoch=None, iteration=None, loss_results=None,
                   cer_results=None, wer_results=None, avg_loss=None, meta=None):
         model_is_cuda = next(model.parameters()).is_cuda
-        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
-        if model_is_cuda or model_is_dist:
-            model = model.module
-        else:
-            model = model
+        model = model.module if model_is_cuda else model
         package = {
             'version': model._version,
             'hidden_size': model._hidden_size,
@@ -266,8 +263,7 @@ class DeepSpeech(nn.Module):
     @staticmethod
     def get_labels(model):
         model_is_cuda = next(model.parameters()).is_cuda
-        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
-        return model.module._labels if model_is_cuda or model_is_dist else model._labels
+        return model.module._labels if model_is_cuda else model._labels
 
     @staticmethod
     def get_param_size(model):
@@ -282,14 +278,12 @@ class DeepSpeech(nn.Module):
     @staticmethod
     def get_audio_conf(model):
         model_is_cuda = next(model.parameters()).is_cuda
-        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
-        return model.module._audio_conf if model_is_cuda or model_is_dist else model._audio_conf
+        return model.module._audio_conf if model_is_cuda else model._audio_conf
 
     @staticmethod
     def get_meta(model):
         model_is_cuda = next(model.parameters()).is_cuda
-        model_is_dist = isinstance(model, torch.nn.parallel.distributed_cpu.DistributedDataParallelCPU)
-        m = model.module if model_is_cuda or model_is_dist else model
+        m = model.module if model_is_cuda else model
         meta = {
             "version": m._version,
             "hidden_size": m._hidden_size,
@@ -325,9 +319,6 @@ if __name__ == '__main__':
     print("  Window Type:      ", model._audio_conf.get("window", "n/a"))
     print("  Window Size:      ", model._audio_conf.get("window_size", "n/a"))
     print("  Window Stride:    ", model._audio_conf.get("window_stride", "n/a"))
-
-    print("engine = ", args.engine)
-    print("supported_rnns = ", supported_rnns)
 
     if package.get('loss_results', None) is not None:
         print("")
